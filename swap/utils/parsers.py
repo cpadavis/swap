@@ -128,6 +128,7 @@ class Parser:
 
             out[key] = value
 
+
         return out
 
     @staticmethod
@@ -224,16 +225,23 @@ class AnnotationParser(Parser):
         """
         Parses the value field of an annotation task
         """
+
         key = self.config.value_key
         sep = self.config.value_separator
 
         if key is not None:
             value = self._navigate(value, key, sep)
 
-        if value in self.config.true:
+        # CPD + PJM 09.04.18: if ANY annotation is made in spacewarps, then the user must think it a positive classification. If None are made, then they think it is a negative classification. If we were going to use the original formatting, then all user classifications (positive or negative) would need to contain some sort of positive/negative tag, regardless of whether an annotation is made.
+        if len(value) > 0:
             return 1
-        if value in self.config.false:
+        elif len(value) == 0:
             return 0
+        else:
+            if value in self.config.true:
+                return 1
+            if value in self.config.false:
+                return 0
 
     class AnnotationError(Exception):
         def __init__(self, task, value_key, annotations, cl=None):
@@ -268,3 +276,20 @@ class GoldsParser(MetadataParser):
     def config(self):
         data = swap.config.parser.subject_metadata
         return {k: v for k, v in data.items() if k in ['subject', 'gold']}
+
+    # hacky workaround. CPD + PJM 09.04.2018.
+    # our input CSV file does not have the gold column set [or even named
+    # properly]. However, we have the gold information buried in subject data
+    # as things like 'SUB' or 'DUD' or 'LENS', so let's grab it from there.
+    def process(self, cl):
+
+        out = {'subject': int(cl['subject_ids'])}
+
+        if 'LENS' in cl['subject_data']:
+            out['gold'] = 1
+        elif 'DUD' in cl['subject_data']:
+            out['gold'] = 0
+        else:
+            out['gold'] = -1
+
+        return out
