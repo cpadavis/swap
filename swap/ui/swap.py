@@ -23,6 +23,7 @@ from swap.swap import SWAP
 from swap.control import Control
 from swap.ui.ui import Interface
 from swap.ui.utils import load_pickle, write_log
+from swap.db import DB
 
 import os
 import csv
@@ -101,6 +102,11 @@ class SWAPInterface(Interface):
                      'matplotlib viewer.')
 
             parser.add_argument(
+                '--user-convergence', nargs=1,
+                metavar='file'
+            )
+
+            parser.add_argument(
                 '--hist', nargs=1,
                 metavar='file',
                 help='Generate multiclass histogram plot. '
@@ -132,9 +138,8 @@ class SWAPInterface(Interface):
             help='save swap to file')
 
         parser.add_argument(
-            '--save-scores', nargs=1,
-            metavar='file',
-            help='save swap scores to file')
+            '--save-scores', action='store_true',
+            help='save swap scores to mongo database')
 
         parser.add_argument(
             '--load', nargs=1,
@@ -226,13 +231,13 @@ class SWAPInterface(Interface):
                 self.export_user_scores(swap, fname)
 
         if scores is not None:
+            if args.save_scores:
+                DB().subjects.save_scores(scores)
+
             if args.scores_to_csv:
                 self.scores_to_csv(scores, args.scores_to_csv[0])
 
         self.plot(args, swap, scores)
-
-        if args.diff:
-            self.difference(args)
 
         if args.shell:
             import code
@@ -242,6 +247,9 @@ class SWAPInterface(Interface):
 
     def plot(self, args, swap, scores):
         if plots._active is True:
+            if args.diff:
+                self.difference(args)
+
             if swap is not None:
                 if args.subject:
                     fname = self.f(args.subject[0])
@@ -250,11 +258,12 @@ class SWAPInterface(Interface):
                 if args.user:
                     fname = self.f(args.user[0])
                     plots.plot_user_cm(swap, fname)
-            if scores is not None:
-                if args.save_scores:
-                    fname = self.f(args.save_scores[0])
-                    self.save(scores, fname)
 
+                if args.user_convergence:
+                    fname = self.f(args.user_convergence[0])
+                    history = swap.user_history_export()
+                    plots.performance.plot_max_contributors(history, fname)
+            if scores is not None:
                 if args.hist:
                     fname = self.f(args.hist[0])
                     plots.plot_class_histogram(fname, scores)

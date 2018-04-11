@@ -22,6 +22,32 @@ def plot_user_cm(swap, fname):
     plot_confusion_matrix(data, "User Confusion Matrices", fname)
 
 
+def plot_max_contributors(history, fname):
+    data = history.max_contributors(15)
+
+    plt.figure(1)
+    for i, g in enumerate([0, 1]):
+        ax = plt.subplot(210 + i + 1)
+        for u in data:
+            # if u == 2947:
+                # continue
+            h = data[u]
+            scores = h.get_scores(g)
+            c = h.convergence(g)
+
+            if len(h.scores) > 0:
+                x, y = zip(*enumerate(scores))
+                plt.plot(x, y, label=u, alpha=.8)
+                plt.plot(c, scores[c], 'ro')
+
+    ax.legend()
+
+    if fname is None:
+        plt.show()
+    else:
+        plt.savefig(fname)
+
+
 def plot_histogram(data, title, fname, dpi=300):
     """
         Generate a histogram plot

@@ -2,10 +2,11 @@
 from swap.db.db import Collection
 import swap.utils.parsers as parsers
 import swap.config as config
+import swap.utils.scores
 
 import sys
 import csv
-from pymongo import IndexModel, ASCENDING
+from pymongo import IndexModel, ASCENDING, UpdateOne
 import logging
 
 logger = logging.getLogger(__name__)
@@ -31,16 +32,6 @@ class Subjects(Collection):
         logger.debug('done')
 
     #######################################################################
-
-    def get_metadata(self, subject_id):
-        cursor = self.collection.find({'subject': subject_id}).sort('_id', -1)
-
-        try:
-            data = cursor.next()
-            data.pop('_id')
-            return data
-        except StopIteration:
-            pass
 
     def get_subjects(self):
         cursor = self.collection.find(projection={'subject': 1})
@@ -80,31 +71,95 @@ class Subjects(Collection):
                 sys.stdout.write("Updated %d subjects\r" % count)
         print()
 
-    def upload_metadata_dump(self, fname):
-        self._rebuild()
 
-        logger.info('parsing csv dump')
-        data = []
+    #######################################################################
+    #####   Metadata   ####################################################
+    #######################################################################
+
+    def get_metadata(self, subject_id):
+        cursor = self.collection.find({'subject': subject_id}).sort('_id', -1)
+
+        try:
+            data = cursor.next()
+            return data['metadata']
+        except StopIteration:
+            pass
+
+    def update_metadata(self, subject, metadata, write=True):
+        updates = {}
+        for key, value in metadata.items():
+            updates['metadata.%s' % key] = value
+        request = {
+            'filter': {'subject': subject},
+            'update': {'$set': updates},
+        }
+
+        if write:
+            self.collection.update_one(**request)
+        else:
+            return UpdateOne(**request)
+
+    def upload_metadata_dump(self, fname):
+        logger.info('parsing csv metadata')
         parser = parsers.MetadataParser('csv')
 
         with open(fname, 'r') as file:
             reader = csv.DictReader(file)
+            requests = []
 
             for i, row in enumerate(reader):
-                item = parser.process(row)
-                print(item)
-                data.append(item)
+                subject, metadata = parser.process(row)
+                requests.append(self.update_metadata(subject, metadata, False))
 
-                sys.stdout.flush()
-                sys.stdout.write("%d records processed\r" % i)
+                if i % 100 == 0:
+                    sys.stdout.flush()
+                    sys.stdout.write("%d records processed\r" % i)
 
-                if len(data) > 100000:
-                    print(data)
-                    self.collection.insert_many(data)
-                    data = []
+                if len(requests) > 100000:
+                    print('uploading requests')
+                    self.collection.bulk_write(requests)
+                    requests = []
 
-        self.collection.insert_many(data)
+        self.collection.bulk_write(requests)
         logger.debug('done')
+
+    #######################################################################
+    #####   ###############################################################
+    #######################################################################
+
+    def save_scores(self, scores):
+        requests = []
+        for score in scores:
+            requests.append(UpdateOne(
+                {'subject': score.id},
+                {'$set': {'score': score.p, 'retired_as': score.label}}
+            ))
+
+        self.collection.bulk_write(requests)
+
+    def get_scores(self):
+        Score = swap.utils.scores.Score
+        ScoreExport = swap.utils.scores.ScoreExport
+
+        cursor = self.collection.find(
+            {},
+            {'subject': 1, 'gold': 1, 'score': 1, 'retired_as': 1}
+        )
+
+        scores = {}
+        for item in cursor:
+            s = item['subject']
+            g = item.get('gold', -1)
+            p = item['score']
+            label = item['retired_as']
+            score = Score(s, g, p)
+            score.label = label
+
+            scores[s] = score
+
+        se = ScoreExport(scores, False)
+        se.gold_getter = None
+        return se
 
 
 class SubjectStats:
@@ -135,7 +190,12 @@ class SubjectStats:
         return cls(subject_id, annotations, **stats)
 
     def dict(self):
-        annotations = {'N': self.annotations[0], 'Y': self.annotations[1]}
+        annotations = {
+            'N': self.annotations[0],
+            'Y': self.annotations[1],
+            'total': sum([self.annotations[i] for i in [0, 1]])
+        }
+
         return {
             'subject_id': self.id,
             'annotations': annotations,
